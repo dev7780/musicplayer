@@ -1,8 +1,8 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { AuthState, User } from '@/types/app';
-import { mockUsers } from '@/data/mockData';
+import { supabase } from '@/lib/supabase';
+import type { Session } from '@supabase/supabase-js';
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
@@ -12,30 +12,6 @@ interface AuthContextType extends AuthState {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// For web, we need to use localStorage instead of SecureStore
-const secureStorage = {
-  setItem: async (key: string, value: string) => {
-    if (Platform.OS === 'web') {
-      localStorage.setItem(key, value);
-      return;
-    }
-    return SecureStore.setItemAsync(key, value);
-  },
-  getItem: async (key: string) => {
-    if (Platform.OS === 'web') {
-      return localStorage.getItem(key);
-    }
-    return SecureStore.getItemAsync(key);
-  },
-  removeItem: async (key: string) => {
-    if (Platform.OS === 'web') {
-      localStorage.removeItem(key);
-      return;
-    }
-    return SecureStore.deleteItemAsync(key);
-  },
-};
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -44,54 +20,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   useEffect(() => {
-    // Check if the user is already logged in
-    const checkLoginStatus = async () => {
-      try {
-        const userData = await secureStorage.getItem('user');
-        if (userData) {
-          setState({
-            user: JSON.parse(userData),
-            isAuthenticated: true,
-            isLoading: false,
-          });
-        } else {
-          setState({
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-          });
-        }
-      } catch (error) {
-        console.error('Error checking login status:', error);
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setUserFromSession(session);
+      } else {
         setState({
           user: null,
           isAuthenticated: false,
           isLoading: false,
         });
       }
+    });
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setUserFromSession(session);
+      } else {
+        setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+        });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const setUserFromSession = (session: Session) => {
+    const user: User = {
+      id: session.user.id,
+      email: session.user.email || '',
+      name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+      isAdmin: session.user.user_metadata?.isAdmin || false,
+      profilePic: session.user.user_metadata?.profilePic || '',
     };
 
-    checkLoginStatus();
-  }, []);
+    setState({
+      user,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+  };
 
   const login = async (email: string, password: string) => {
     try {
-      // In a real app, you would make an API call to authenticate
-      // For this demo, we'll use mock data
-      const user = mockUsers.find(
-        (u) => u.email.toLowerCase() === email.toLowerCase() && password === 'password'
-      );
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      if (!user) {
-        throw new Error('Invalid credentials');
+      if (error) {
+        throw error;
       }
 
-      await secureStorage.setItem('user', JSON.stringify(user));
-      setState({
-        user,
-        isAuthenticated: true,
-        isLoading: false,
-      });
+      // User state will be updated by the auth state change listener
     } catch (error) {
       console.error('Login error:', error);
       throw error;
@@ -100,12 +87,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await secureStorage.removeItem('user');
-      setState({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw error;
+      }
+      // User state will be updated by the auth state change listener
     } catch (error) {
       console.error('Logout error:', error);
       throw error;

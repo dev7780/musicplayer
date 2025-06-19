@@ -47,10 +47,10 @@ export default function AuthScreen() {
     try {
       await login(email, password);
       router.replace('/(tabs)');
-    } catch (error) {
+    } catch (error: any) {
       Alert.alert(
         'Login Failed',
-        'Invalid credentials. For demo, use user@example.com or admin@example.com with password "password"'
+        error.message || 'Invalid credentials. Please check your email and password.'
       );
     } finally {
       setIsLoading(false);
@@ -61,13 +61,13 @@ export default function AuthScreen() {
     setIsLoading(true);
     try {
       if (userType === 'user') {
-        await login('user@example.com', 'password');
+        await login('user@example.com', 'password123');
       } else {
-        await login('admin@example.com', 'password');
+        await login('admin@example.com', 'password123');
       }
       router.replace('/(tabs)');
-    } catch (error) {
-      Alert.alert('Login Failed', 'Something went wrong with the demo login');
+    } catch (error: any) {
+      Alert.alert('Login Failed', error.message || 'Something went wrong with the demo login');
     } finally {
       setIsLoading(false);
     }
@@ -135,6 +135,14 @@ export default function AuthScreen() {
             style={styles.demoButton}
           />
         </View>
+
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoText}>
+            Demo credentials:{'\n'}
+            Regular User: user@example.com / password123{'\n'}
+            Admin User: admin@example.com / password123
+          </Text>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -193,5 +201,18 @@ const styles = StyleSheet.create({
   demoButton: {
     flex: 1,
     marginHorizontal: Spacing.xs,
+  },
+  infoContainer: {
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    backgroundColor: Colors.neutral[100],
+    borderRadius: BorderRadius.md,
+  },
+  infoText: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSizes.xs,
+    color: Colors.neutral[600],
+    textAlign: 'center',
+    lineHeight: 16,
   },
 });

@@ -1,5 +1,7 @@
 import { User, Song, Playlist, Category } from '@/types/app';
+import { supabase } from '@/lib/supabase';
 
+// Keep mock users for demo purposes (these will be created in Supabase Auth)
 export const mockUsers: User[] = [
   {
     id: '1',
@@ -17,6 +19,7 @@ export const mockUsers: User[] = [
   },
 ];
 
+// Keep mock data for initial seeding and fallback
 export const mockSongs: Song[] = [
   {
     id: '1',
@@ -266,22 +269,159 @@ export const mockCategories: Category[] = [
   },
 ];
 
-export const getPlaylistSongs = (playlistId: string): Song[] => {
-  const playlist = mockPlaylists.find((p) => p.id === playlistId);
-  if (!playlist) return [];
-  
-  return playlist.songs.map((songId) => 
-    mockSongs.find((s) => s.id === songId)
-  ).filter((song): song is Song => song !== undefined);
+// API helper functions that now use Supabase
+export const getPlaylistSongs = async (playlistId: string): Promise<Song[]> => {
+  try {
+    const { data: playlist, error } = await supabase
+      .from('playlists')
+      .select(`
+        playlist_songs (
+          song_id,
+          position,
+          songs (*)
+        )
+      `)
+      .eq('id', playlistId)
+      .single();
+
+    if (error || !playlist) {
+      console.error('Error fetching playlist songs:', error);
+      // Fallback to mock data
+      const mockPlaylist = mockPlaylists.find((p) => p.id === playlistId);
+      if (!mockPlaylist) return [];
+      
+      return mockPlaylist.songs.map((songId) => 
+        mockSongs.find((s) => s.id === songId)
+      ).filter((song): song is Song => song !== undefined);
+    }
+
+    // Transform and sort by position
+    const songs = playlist.playlist_songs
+      .sort((a, b) => a.position - b.position)
+      .map(ps => ({
+        id: ps.songs.id,
+        title: ps.songs.title,
+        artist: ps.songs.artist,
+        album: ps.songs.album || '',
+        duration: ps.songs.duration,
+        coverArt: ps.songs.cover_art_url || '',
+        audioUrl: ps.songs.audio_url,
+        genre: ps.songs.genre,
+        releaseYear: ps.songs.release_year,
+      }));
+
+    return songs;
+  } catch (error) {
+    console.error('Error in getPlaylistSongs:', error);
+    // Fallback to mock data
+    const mockPlaylist = mockPlaylists.find((p) => p.id === playlistId);
+    if (!mockPlaylist) return [];
+    
+    return mockPlaylist.songs.map((songId) => 
+      mockSongs.find((s) => s.id === songId)
+    ).filter((song): song is Song => song !== undefined);
+  }
 };
 
-export const getSongsByCategory = (categoryId: string): Song[] => {
-  const category = mockCategories.find((c) => c.id === categoryId);
-  if (!category) return [];
-  
-  return mockSongs.filter((song) => song.genre === category.name);
+export const getSongsByCategory = async (categoryId: string): Promise<Song[]> => {
+  try {
+    // First get the category name
+    const { data: category, error: categoryError } = await supabase
+      .from('categories')
+      .select('name')
+      .eq('id', categoryId)
+      .single();
+
+    if (categoryError || !category) {
+      console.error('Error fetching category:', categoryError);
+      // Fallback to mock data
+      const mockCategory = mockCategories.find((c) => c.id === categoryId);
+      if (!mockCategory) return [];
+      return mockSongs.filter((song) => song.genre === mockCategory.name);
+    }
+
+    // Get songs by genre
+    const { data: songs, error: songsError } = await supabase
+      .from('songs')
+      .select('*')
+      .eq('genre', category.name);
+
+    if (songsError) {
+      console.error('Error fetching songs by category:', songsError);
+      // Fallback to mock data
+      return mockSongs.filter((song) => song.genre === category.name);
+    }
+
+    // Transform to app format
+    return songs.map(song => ({
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: song.album || '',
+      duration: song.duration,
+      coverArt: song.cover_art_url || '',
+      audioUrl: song.audio_url,
+      genre: song.genre,
+      releaseYear: song.release_year,
+    }));
+  } catch (error) {
+    console.error('Error in getSongsByCategory:', error);
+    // Fallback to mock data
+    const mockCategory = mockCategories.find((c) => c.id === categoryId);
+    if (!mockCategory) return [];
+    return mockSongs.filter((song) => song.genre === mockCategory.name);
+  }
 };
 
 export const getLikedSongs = (): Song[] => {
+  // For now, return mock liked songs
+  // In a real app, you'd store user preferences in a separate table
   return mockSongs.filter((song) => song.liked);
+};
+
+// Seed data function for initial setup
+export const seedDatabase = async () => {
+  try {
+    console.log('Seeding database with initial data...');
+
+    // Seed categories
+    for (const category of mockCategories) {
+      const { error } = await supabase
+        .from('categories')
+        .upsert({
+          id: category.id,
+          name: category.name,
+          cover_art_url: category.coverArt,
+        }, { onConflict: 'name' });
+
+      if (error) {
+        console.error('Error seeding category:', category.name, error);
+      }
+    }
+
+    // Seed songs
+    for (const song of mockSongs) {
+      const { error } = await supabase
+        .from('songs')
+        .upsert({
+          id: song.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album,
+          duration: song.duration,
+          cover_art_url: song.coverArt,
+          audio_url: song.audioUrl,
+          genre: song.genre,
+          release_year: song.releaseYear,
+        }, { onConflict: 'id' });
+
+      if (error) {
+        console.error('Error seeding song:', song.title, error);
+      }
+    }
+
+    console.log('Database seeding completed!');
+  } catch (error) {
+    console.error('Error seeding database:', error);
+  }
 };
