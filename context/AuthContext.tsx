@@ -1,13 +1,14 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { Platform } from 'react-native';
 import { AuthState, User } from '@/types/app';
-import { supabase } from '@/lib/supabase';
+import { supabase, getUserProfile } from '@/lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isAdmin: () => boolean;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -36,9 +37,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session) {
-        setUserFromSession(session);
+        await setUserFromSession(session);
       } else {
         setState({
           user: null,
@@ -51,20 +52,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const setUserFromSession = (session: Session) => {
-    const user: User = {
-      id: session.user.id,
-      email: session.user.email || '',
-      name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
-      isAdmin: session.user.user_metadata?.isAdmin || false,
-      profilePic: session.user.user_metadata?.profilePic || '',
-    };
+  const setUserFromSession = async (session: Session) => {
+    try {
+      // Get user profile from our custom table
+      const { data: profile } = await getUserProfile(session.user.id);
+      
+      const user: User = {
+        id: session.user.id,
+        email: session.user.email || '',
+        name: profile?.display_name || session.user.email?.split('@')[0] || 'User',
+        isAdmin: profile?.is_admin || false,
+        profilePic: profile?.avatar_url || '',
+      };
 
-    setState({
-      user,
-      isAuthenticated: true,
-      isLoading: false,
-    });
+      setState({
+        user,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error('Error setting user from session:', error);
+      setState({
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+      });
+    }
   };
 
   const login = async (email: string, password: string) => {
@@ -98,6 +111,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshUser = async () => {
+    if (state.user) {
+      const { data: session } = await supabase.auth.getSession();
+      if (session.session) {
+        await setUserFromSession(session.session);
+      }
+    }
+  };
+
   const isAdmin = () => {
     return state.user?.isAdmin || false;
   };
@@ -109,6 +131,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         logout,
         isAdmin,
+        refreshUser,
       }}
     >
       {children}

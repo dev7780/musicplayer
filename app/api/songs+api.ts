@@ -2,10 +2,30 @@ import { supabase } from '@/lib/supabase';
 
 export async function GET(request: Request) {
   try {
-    const { data: songs, error } = await supabase
+    const url = new URL(request.url);
+    const genre = url.searchParams.get('genre');
+    const search = url.searchParams.get('search');
+    const limit = url.searchParams.get('limit');
+
+    let query = supabase
       .from('songs')
       .select('*')
       .order('created_at', { ascending: false });
+
+    // Apply filters
+    if (genre) {
+      query = query.eq('genre', genre);
+    }
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,artist.ilike.%${search}%,album.ilike.%${search}%`);
+    }
+
+    if (limit) {
+      query = query.limit(parseInt(limit));
+    }
+
+    const { data: songs, error } = await query;
 
     if (error) {
       console.error('Error fetching songs:', error);
@@ -98,7 +118,6 @@ export async function PUT(request: Request) {
       audio_url: updateData.audioUrl,
       genre: updateData.genre || null,
       release_year: updateData.releaseYear || null,
-      updated_at: new Date().toISOString(),
     };
 
     const { data: song, error } = await supabase
