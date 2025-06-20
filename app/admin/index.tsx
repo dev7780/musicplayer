@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, Alert, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, Alert, Image, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, Music, Users, Tag, Edit, Trash2 } from 'lucide-react-native';
+import { ChevronLeft, Music, Users, Tag, CreditCard as Edit, Trash2 } from 'lucide-react-native';
 import { Colors, FontFamily, FontSizes, Spacing, BorderRadius } from '@/constants/Theme';
 import { useAuth } from '@/context/AuthContext';
 import { SongDialog } from '@/components/admin/SongDialog';
@@ -10,7 +10,7 @@ import { CategoryDialog } from '@/components/admin/CategoryDialog';
 import { UserDialog } from '@/components/admin/UserDialog';
 import { DeleteDialog } from '@/components/admin/DeleteDialog';
 import { Song, Category, User } from '@/types/app';
-import { mockSongs, mockCategories, mockUsers } from '@/data/mockData';
+import { songsApi, categoriesApi, usersApi } from '@/services/api';
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -18,9 +18,11 @@ export default function AdminScreen() {
   const [activeTab, setActiveTab] = useState<'songs' | 'categories' | 'users'>('songs');
   
   // Data states
-  const [songs, setSongs] = useState<Song[]>(mockSongs);
-  const [categories, setCategories] = useState<Category[]>(mockCategories);
-  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   
   // Dialog states
   const [songDialogVisible, setSongDialogVisible] = useState(false);
@@ -34,8 +36,35 @@ export default function AdminScreen() {
   useEffect(() => {
     if (!isAuthenticated || !isAdmin()) {
       router.replace('/');
+    } else {
+      loadData();
     }
   }, [isAuthenticated, isAdmin, router]);
+
+  const loadData = async () => {
+    try {
+      const [songsData, categoriesData, usersData] = await Promise.all([
+        songsApi.getAll(),
+        categoriesApi.getAll(),
+        usersApi.getAll(),
+      ]);
+      
+      setSongs(songsData);
+      setCategories(categoriesData);
+      setUsers(usersData);
+    } catch (error) {
+      console.error('Error loading admin data:', error);
+      Alert.alert('Error', 'Failed to load data');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
 
   const handleBack = () => {
     router.back();
@@ -81,25 +110,17 @@ export default function AdminScreen() {
   const handleSongSubmit = async (song: Partial<Song>) => {
     try {
       if (dialogMode === 'add') {
-        const newSong: Song = {
-          id: Date.now().toString(),
-          title: song.title!,
-          artist: song.artist!,
-          album: song.album || '',
-          duration: song.duration || 180,
-          coverArt: song.coverArt || '',
-          audioUrl: song.audioUrl!,
-          genre: song.genre,
-          releaseYear: song.releaseYear,
-        };
-        setSongs(prev => [...prev, newSong]);
+        const newSong = await songsApi.create(song);
+        setSongs(prev => [newSong, ...prev]);
         Alert.alert('Success', 'Song added successfully');
       } else {
-        setSongs(prev => prev.map(s => s.id === selectedItem.id ? { ...s, ...song } : s));
+        const updatedSong = await songsApi.update(selectedItem.id, song);
+        setSongs(prev => prev.map(s => s.id === selectedItem.id ? updatedSong : s));
         Alert.alert('Success', 'Song updated successfully');
       }
       setSongDialogVisible(false);
     } catch (error) {
+      console.error('Error saving song:', error);
       Alert.alert('Error', 'Failed to save song');
     }
   };
@@ -107,19 +128,17 @@ export default function AdminScreen() {
   const handleCategorySubmit = async (category: Partial<Category>) => {
     try {
       if (dialogMode === 'add') {
-        const newCategory: Category = {
-          id: Date.now().toString(),
-          name: category.name!,
-          coverArt: category.coverArt || '',
-        };
-        setCategories(prev => [...prev, newCategory]);
+        const newCategory = await categoriesApi.create(category);
+        setCategories(prev => [newCategory, ...prev]);
         Alert.alert('Success', 'Category added successfully');
       } else {
-        setCategories(prev => prev.map(c => c.id === selectedItem.id ? { ...c, ...category } : c));
+        const updatedCategory = await categoriesApi.update(selectedItem.id, category);
+        setCategories(prev => prev.map(c => c.id === selectedItem.id ? updatedCategory : c));
         Alert.alert('Success', 'Category updated successfully');
       }
       setCategoryDialogVisible(false);
     } catch (error) {
+      console.error('Error saving category:', error);
       Alert.alert('Error', 'Failed to save category');
     }
   };
@@ -127,21 +146,17 @@ export default function AdminScreen() {
   const handleUserSubmit = async (user: Partial<User>) => {
     try {
       if (dialogMode === 'add') {
-        const newUser: User = {
-          id: Date.now().toString(),
-          name: user.name!,
-          email: user.email!,
-          isAdmin: user.isAdmin || false,
-          profilePic: user.profilePic || '',
-        };
-        setUsers(prev => [...prev, newUser]);
+        const newUser = await usersApi.create(user as User & { password: string });
+        setUsers(prev => [newUser, ...prev]);
         Alert.alert('Success', 'User added successfully');
       } else {
-        setUsers(prev => prev.map(u => u.id === selectedItem.id ? { ...u, ...user } : u));
+        const updatedUser = await usersApi.update(selectedItem.id, user);
+        setUsers(prev => prev.map(u => u.id === selectedItem.id ? updatedUser : u));
         Alert.alert('Success', 'User updated successfully');
       }
       setUserDialogVisible(false);
     } catch (error) {
+      console.error('Error saving user:', error);
       Alert.alert('Error', 'Failed to save user');
     }
   };
@@ -150,18 +165,22 @@ export default function AdminScreen() {
     try {
       switch (activeTab) {
         case 'songs':
+          await songsApi.delete(selectedItem.id);
           setSongs(prev => prev.filter(s => s.id !== selectedItem.id));
           break;
         case 'categories':
+          await categoriesApi.delete(selectedItem.id);
           setCategories(prev => prev.filter(c => c.id !== selectedItem.id));
           break;
         case 'users':
+          await usersApi.delete(selectedItem.id);
           setUsers(prev => prev.filter(u => u.id !== selectedItem.id));
           break;
       }
       Alert.alert('Success', 'Item deleted successfully');
       setDeleteDialogVisible(false);
     } catch (error) {
+      console.error('Error deleting item:', error);
       Alert.alert('Error', 'Failed to delete item');
     }
   };
@@ -247,6 +266,16 @@ export default function AdminScreen() {
     return null;
   }
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -304,6 +333,9 @@ export default function AdminScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
       />
 
       {/* Dialogs */}
@@ -346,6 +378,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.neutral[50],
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSizes.lg,
+    color: Colors.neutral[600],
   },
   header: {
     flexDirection: 'row',
